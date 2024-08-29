@@ -7,7 +7,7 @@ from utils import DataLoader, DataProcessor, PathReconstructor
 
 def main():
     # Add your logo at the top of the app
-    st.image("logo.png", width=150)  # Adjust the width as needed
+    st.image("logo.png", width=150)
     st.title("CorrDash: Dashboard for Data Analysis and Visualization")
 
     data_loader = DataLoader()
@@ -38,8 +38,8 @@ def main():
 
         if data_dict:
             st.sidebar.header("Data Fields Statistical Analysis")
-            metadata_field = st.sidebar.selectbox("Select data field", list(data_dict.values())[0].columns)
-            show_on_same_figure_metadata = st.sidebar.checkbox("Show all data field graphs on the same figure")
+            data_field = st.sidebar.selectbox("Select data field", list(data_dict.values())[0].columns)
+            show_on_same_figure = st.sidebar.checkbox("Show all data field graphs on the same figure")
             num_bins = st.sidebar.slider("Number of bins", min_value=10, max_value=100, value=50)
 
             st.sidebar.header("Preprocessing Options")
@@ -52,14 +52,14 @@ def main():
                 lowcut = st.sidebar.number_input("Low Cutoff Frequency (Hz)", value=0.5, min_value=0.1, max_value=100.0, step=0.1)
                 highcut = st.sidebar.number_input("High Cutoff Frequency (Hz)", value=30.0, min_value=0.1, max_value=100.0, step=0.1)
 
-            st.header(f"Data Fields Statistical Analysis: {metadata_field}")
+            st.header(f"Data Fields Statistical Analysis: {data_field}")
 
             statistical_summaries = []
-            combined_fig = go.Figure() if show_on_same_figure_metadata else None
+            combined_fig = go.Figure() if show_on_same_figure else None
             color_sequence = px.colors.qualitative.Set3  # Use a distinct color sequence
 
             for idx, (name, data) in enumerate(data_dict.items()):
-                if metadata_field in data.columns:
+                if data_field in data.columns:
                     if preprocessing_option == 'Smoothing':
                         preprocessed_data, _ = data_processor.preprocess_data(data, preprocessing_option, window=window_size)
                     elif preprocessing_option == 'Band-Pass Filter':
@@ -68,30 +68,30 @@ def main():
                         preprocessed_data, _ = data_processor.preprocess_data(data, preprocessing_option)
 
                     # Collect statistical summary for side-by-side display
-                    summary = preprocessed_data[metadata_field].describe()
+                    summary = preprocessed_data[data_field].describe()
                     summary.name = name
                     statistical_summaries.append(summary)
 
                     # Plot using Plotly
-                    if show_on_same_figure_metadata:
-                        combined_fig.add_trace(go.Histogram(x=preprocessed_data[metadata_field], name=f"{name}",
+                    if show_on_same_figure:
+                        combined_fig.add_trace(go.Histogram(x=preprocessed_data[data_field], name=f"{name}",
                                                             marker_color=color_sequence[idx % len(color_sequence)], nbinsx=num_bins))
                     else:
-                        fig = px.histogram(preprocessed_data, x=metadata_field, nbins=num_bins, title=f"{metadata_field} Distribution ({name})")
+                        fig = px.histogram(preprocessed_data, x=data_field, nbins=num_bins, title=f"{data_field} Distribution ({name})")
                         fig.update_layout(bargap=0.1, height=400, width=800)
                         st.plotly_chart(fig)
                 else:
-                    st.warning(f"The file '{name}' does not contain the field '{metadata_field}'.")
+                    st.warning(f"The file '{name}' does not contain the field '{data_field}'.")
 
             # Display combined figure if checkbox is ticked
-            if show_on_same_figure_metadata:
-                combined_fig.update_layout(barmode='overlay', title=f"Combined {metadata_field} Distribution", height=400, width=800)
+            if show_on_same_figure:
+                combined_fig.update_layout(barmode='overlay', title=f"Combined {data_field} Distribution", height=400, width=800)
                 combined_fig.update_traces(opacity=0.75)
                 st.plotly_chart(combined_fig)
 
             # Display statistical summaries side by side
             if statistical_summaries:
-                st.subheader("Statistical Summaries Side by Side")
+                st.subheader("Statistical Summaries")
                 st.write(pd.concat(statistical_summaries, axis=1))
 
             # Visualization of Single Drive Files
