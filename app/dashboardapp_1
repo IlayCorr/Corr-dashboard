@@ -1,0 +1,139 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+import boto3
+import pyarrow.parquet as pq
+from io import BytesIO
+
+# Cache mechanism to reduce overhead time
+@st.cache_data
+def load_data(file_path=None, s3_url=None):
+    if file_path:
+        return pd.read_parquet(file_path)
+    elif s3_url:
+        return load_data_from_s3(s3_url)
+    return None
+
+@st.cache_data
+def load_data_from_s3(s3_url):
+    # Split the S3 URL into bucket and key
+    s3_bucket, s3_key = s3_url.replace("s3://", "").split("/", 1)
+    s3 = boto3.client('s3')
+    response = s3.get_object(Bucket=s3_bucket, Key=s3_key)
+    return pd.read_parquet(BytesIO(response['Body'].read()))
+
+@st.cache_data
+def preprocess_data(data, method, window=5):
+    if method == 'Derivative':
+        return data.diff().fillna(0)
+    elif method == 'Scaling':
+        scaler = StandardScaler()
+        return pd.DataFrame(scaler.fit_transform(data), columns=data.columns)
+    elif method == 'Smoothing':
+        return data.rolling(window=window).mean().fillna(method='bfill')
+    return data
+
+def main():
+    st.title("Dashboard for Data Analysis and Visualization")
+
+    # Sidebar for file upload, S3 URL, and selection
+    st.sidebar.header("Data Source")
+    data_source = st.sidebar.selectbox("Select data source", ["Upload a file", "S3 URL"])
+
+    if data_source == "Upload a file":
+        uploaded_file = st.sidebar.file_uploader("Choose a file", type=["parquet"])
+        s3_url = None
+    elif data_source == "S3 URL":
+        s3_url = st.sidebar.text_input("Enter S3 URL (e.g., s3://bucket_name/path/to/file.parquet)")
+        uploaded_file = None
+
+    if uploaded_file or s3_url:
+        data = load_data(file_path=uploaded_file, s3_url=s3_url)
+        if data is not None:
+            st.sidebar.header("Metadata Analysis")
+            metadata_field = st.sidebar.selectbox("Select metadata field", data.columns)
+            st.sidebar.header("Preprocessing Options")
+            preprocessing_option = st.sidebar.selectbox("Choose preprocessing method", ["None", "Derivative", "Scaling", "Smoothing"])
+            window_size = st.sidebar.slider("Smoothing window size", min_value=1, max_value=10, value=5) if preprocessing_option == 'Smoothing' else None
+
+            st.header(f"Metadata Analysis: {metadata_field}")
+            st.write(data[metadata_field].describe())
+            st.write("Statistical Plots")
+            fig, ax = plt.subplots()
+            sns.histplot(data[metadata_field], kde=True, ax=ax)
+            st.pyplot(fig)
+
+            # Preprocess the data if needed
+            preprocessed_data = preprocess_data(data, preprocessing_option, window_size)
+
+            # 2D Distribution Plot
+            st.sidebar.header("2D Distribution Plot")
+            signal_x = st.sidebar.selectbox("Select X-axis signal", data.columns)
+            signal_y = st.sidebar.selectbox("Select Y-axis signal", data.columns)
+
+            st.header(f"2D Distribution Plot: {signal_x} vs {signal_y}")
+            fig, ax = plt.subplots()
+            sns.kdeplot(x=preprocessed_data[signal_x], y=preprocessed_data[signal_y], ax=ax)
+            st.pyplot(fig)
+
+            # Visualization of Single Drive Files
+            st.sidebar.header("Single Drive Visualization")
+            selected_signals = st.sidebar.multiselect("Select signals to display", data.columns)
+            subplot_option = st.sidebar.checkbox("Use subplots for each signal", value=True)
+
+            if selected_signals:
+                st.header("Single Drive File Visualization")
+                fig, axes = plt.subplots(len(selected_signals), 1, sharex=True if subplot_option else False)
+                if len(selected_signals) == 1:
+                    axes = [axes]
+
+                for i, signal in enumerate(selected_signals):
+                    axes[i].plot(data[signal], label=signal)
+                    axes[i].legend()
+
+                st.pyplot(fig)
+
+            # Clustering and Embedding Visualization
+            st.sidebar.header("Clustering and Embeddings")
+            embedding_option = st.sidebar.checkbox("Perform PCA for Embedding Visualization")
+            cluster_option = st.sidebar.checkbox("Perform Clustering")
+
+            if embedding_option:
+                st.header("PCA Embedding Visualization")
+                pca = PCA(n_components=2)
+                components = pca.fit_transform(preprocessed_data)
+                pca_df = pd.DataFrame(components, columns=['PCA1', 'PCA2'])
+
+                fig, ax = plt.subplots()
+                sns.scatterplot(x='PCA1', y='PCA2', data=pca_df, ax=ax)
+                st.pyplot(fig)
+
+            if cluster_option:
+                st.header("Clustering Visualization")
+                num_clusters = st.sidebar.slider("Select number of clusters", min_value=2, max_value=10, value=3)
+                kmeans = KMeans(n_clusters=num_clusters)
+                clusters = kmeans.fit_predict(preprocessed_data)
+
+                st.write(f"Clustering results: {num_clusters} clusters")
+                preprocessed_data['Cluster'] = clusters
+
+                fig, ax = plt.subplots()
+                sns.scatterplot(x=signal_x, y=signal_y, hue='Cluster', palette='viridis', data=preprocessed_data, ax=ax)
+                st.pyplot(fig)
+
+                st.header("Heat Map of Detection Probability")
+                heatmap_x = st.sidebar.selectbox("Select X-axis for Heat Map", data.columns)
+                heatmap_y = st.sidebar.selectbox("Select Y-axis for Heat Map", data.columns)
+
+                heatmap_data = preprocessed_data.pivot_table(index=heatmap_x, columns=heatmap_y, aggfunc='mean', fill_value=0)
+                fig, ax = plt.subplots()
+                sns.heatmap(heatmap_data, ax=ax)
+                st.pyplot(fig)
+
+if __name__ == "__main__":
+    main()
