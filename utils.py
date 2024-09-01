@@ -57,52 +57,91 @@ class PathReconstructor:
         """
         Reconstruct the path of the car using a bicycle model.
         
-        :param wheel_angle: Array of steering angles (in degrees).
+        :param wheel_angle: Array of steering angles (in radians).
         :param speed: Array of speed values (in m/s).
         :param sampling_frequency: Sampling frequency of the data (in Hz).
         :return: x_path, y_path: Arrays of x and y positions.
         """
-        # Initialize position and orientation
         x, y, theta = 0, 0, 0
         dt = 1 / sampling_frequency
         
-        # Convert angles from degrees to radians
-        # wheel_angle = np.radians(wheel_angle)
+        x_path, y_path = [x], [y]
         
-        # Initialize arrays to hold the path
-        x_path = [x]
-        y_path = [y]
-        
-        # Loop over all data points to calculate the path
         for angle, spd in zip(wheel_angle, speed):
             if spd == 0:
-                # If the speed is zero, the vehicle doesn't move.
                 x_path.append(x)
                 y_path.append(y)
                 continue
-            
-            # Calculate the turning radius (R)
+
             if angle != 0:
                 R = self.wheel_base / np.tan(angle)
             else:
-                R = np.inf  # Going straight
+                R = np.inf
             
-            # Update the orientation (theta)
             if R != np.inf:
                 d_theta = spd * dt / R
             else:
                 d_theta = 0
             
             theta += d_theta
-            
-            # Update x and y positions
-            dx = spd * np.cos(theta) * dt
-            dy = spd * np.sin(theta) * dt
-            
-            x += dx
-            y += dy
+            x += spd * np.cos(theta) * dt
+            y += spd * np.sin(theta) * dt
             
             x_path.append(x)
             y_path.append(y)
         
         return np.array(x_path), np.array(y_path)
+
+    def calculate_similarity(self, path1, path2):
+        """
+        Calculate a similarity index between two paths.
+        
+        :param path1: Tuple of (x_path, y_path) for the first path.
+        :param path2: Tuple of (x_path, y_path) for the second path.
+        :return: similarity_index: A value between 0 and 1.
+        """
+        x1, y1 = path1
+        x2, y2 = path2
+
+        # Normalize paths to account for differences in starting points
+        x1 -= x1[0]
+        y1 -= y1[0]
+        x2 -= x2[0]
+        y2 -= y2[0]
+
+        # Resample paths to the same length for comparison
+        len1 = len(x1)
+        len2 = len(x2)
+        length = max(len1, len2)
+
+        x1_resampled = np.interp(np.linspace(0, 1, length), np.linspace(0, 1, len1), x1)
+        y1_resampled = np.interp(np.linspace(0, 1, length), np.linspace(0, 1, len1), y1)
+        x2_resampled = np.interp(np.linspace(0, 1, length), np.linspace(0, 1, len2), x2)
+        y2_resampled = np.interp(np.linspace(0, 1, length), np.linspace(0, 1, len2), y2)
+
+        # Calculate Euclidean distance between resampled paths
+        distance = np.sqrt((x1_resampled - x2_resampled) ** 2 + (y1_resampled - y2_resampled) ** 2)
+        
+        # Normalize distance to a similarity index between 0 and 1
+        max_distance = np.sqrt((x1_resampled.max() - x1_resampled.min())**2 + (y1_resampled.max() - y1_resampled.min())**2)
+        similarity_index = 1 - np.clip(np.mean(distance / max_distance), 0, 1)
+        
+        return similarity_index
+
+    def calculate_similarity_matrix(self, paths):
+        """
+        Calculate a similarity matrix for multiple paths.
+        
+        :param paths: Dictionary of {name: (x_path, y_path)} for each file.
+        :return: similarity_matrix: DataFrame containing similarity indices.
+        """
+        names = list(paths.keys())
+        similarity_matrix = np.zeros((len(names), len(names)))
+
+        for i, name1 in enumerate(names):
+            for j, name2 in enumerate(names):
+                if i <= j:  # Compute only for upper triangle and diagonal
+                    similarity_matrix[i, j] = self.calculate_similarity(paths[name1], paths[name2])
+                    similarity_matrix[j, i] = similarity_matrix[i, j]
+
+        return pd.DataFrame(similarity_matrix, index=names, columns=names)
